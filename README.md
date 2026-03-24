@@ -1,26 +1,45 @@
-# BetterTouchTool Coinbase Preset
+# BetterTouchTool Crypto Price Presets
 
-This folder contains a cleaned-up BetterTouchTool preset for Touch Bar prices.
+This repository contains BetterTouchTool Touch Bar presets for live crypto prices.
 
-Supported coins:
+## Included presets
 
-- Bitcoin
-- Ethereum
-- Zcash
-- Litecoin
+- [crypto-price-Coinbase.json](./crypto-price-Coinbase.json)
+- [crypto-price-Binance.json](./crypto-price-Binance.json)
 
-All values are shown in USD and are refreshed every 10 seconds.
-`BTC` and `ETH` are rounded to whole dollars, while `ZEC` and `LTC` show 2 decimal places.
+## Shared behavior
+
+Both presets use the same layout and formatting:
+
+- Coins: Bitcoin, Ethereum, Zcash, Litecoin
+- Order: `BTC`, `ETH`, `ZEC`, `LTC`
+- Currency: USD
+- Refresh interval: every 10 seconds
+- Formatting: `BTC` and `ETH` are rounded to whole dollars, `ZEC` and `LTC` show 2 decimal places
+- Theme: black buttons, white text, embedded coin icons
+
+## Differences
+
+### Coinbase preset
+
+- File: [crypto-price-Coinbase.json](./crypto-price-Coinbase.json)
+- BetterTouchTool preset name: `Crypto Price Coinbase`
+- Price source: Coinbase spot price API
+- Button links open Coinbase asset pages
+
+### Binance preset
+
+- File: [crypto-price-Binance.json](./crypto-price-Binance.json)
+- BetterTouchTool preset name: `Crypto Price Binance`
+- Price source: Binance spot ticker API
+- Button links open Binance asset pages
 
 ## Import
 
-Import [crypto-price-Coinbase.json](./crypto-price-Coinbase.json) into BetterTouchTool via `Manage Presets > Import`.
+Import the preset you want in BetterTouchTool via `Manage Presets > Import`.
 
 ## Notes
 
-- `BTC`, `ETH`, `LTC`, and `ZEC` use the Coinbase spot price endpoint.
-- The preset name inside BetterTouchTool is `Crypto Price Coinbase`.
-- You can change order, colors, and refresh interval from BetterTouchTool preferences.
-- The current theme uses black button backgrounds with white text.
-
-- Coin icons are sourced from the `spothq/cryptocurrency-icons` set on GitHub.
+- Coin icons are embedded directly in the preset via `BTTIconData`.
+- The icon artwork is based on the `spothq/cryptocurrency-icons` set on GitHub.
+- You can adjust colors, width, order, and refresh interval directly in BetterTouchTool after import.
