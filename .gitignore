@@ -1,0 +1,8 @@
+.DS_Store
+*.log
+
+# Ignore all project folders; keep only root files tracked.
+*/
+!.gitignore
+!README.md
+!crypto-price-Coinbase.json
