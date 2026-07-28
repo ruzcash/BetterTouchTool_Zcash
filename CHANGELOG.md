@@ -1,5 +1,41 @@
 # Changelog
 
+## 2.1.0 — 2026-07-28
+
+### Added
+
+- Optimized provider presets for Gemini USD spot, OKX USDT spot, KuCoin USDT
+  spot, and NEAR Intents reference USD prices.
+- A provider-aware cache namespace and a reproducible preset generator.
+- Structural tests that reject direct network calls inside preset AppleScripts.
+
+### Changed
+
+- Coinbase now uses the same asynchronous cache design as Binance. One public
+  Advanced Trade USD spot response replaces five synchronous AppleScript
+  `curl` calls, including the duplicate ZEC request in the details submenu.
+- Binance now calls the provider-aware helper explicitly while the legacy v2.0
+  command format remains supported.
+- NEAR Intents refreshes at a lower frequency because its public token catalog
+  is larger and its reference prices update less frequently than exchange
+  tickers.
+
+### Provider policy
+
+- ZEC support is mandatory. Gemini was selected because `ZECUSD` is an active
+  spot market.
+- Bybit was not added because it lacks ZEC spot trading; using a ZEC perpetual
+  price beside spot prices would change the meaning of the preset.
+- Provider variants share a preset UUID intentionally, making source changes a
+  replacement rather than creating duplicate Touch Bar layouts.
+
+### Why
+
+The v2.0 performance fix covered Binance price widgets but left Coinbase price
+widgets on the original synchronous code path. Version 2.1 removes network I/O
+from every included preset's BetterTouchTool AppleScript runner while expanding
+the choice of ZEC-capable sources.
+
 ## 2.0.0 — 2026-07-28
 
 ### Changed

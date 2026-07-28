@@ -10,10 +10,9 @@ umask 077
 MODE=${1:-}
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 CACHE_DIR=${TMPDIR:-/tmp}/com.ak.BetterTouchTool_Zcash
-PRICE_CACHE=$CACHE_DIR/prices.tsv
 SUPPLY_CACHE=$CACHE_DIR/shielded-supply.tsv
 FLOW_CACHE=$CACHE_DIR/net-shielded-flow.tsv
-CACHE_TTL_SECONDS=9
+DEFAULT_CACHE_TTL_SECONDS=9
 
 mkdir -p "$CACHE_DIR" || exit 1
 
@@ -34,20 +33,22 @@ cache_value() {
 
 cache_is_fresh() {
   cache_file=$1
+  cache_ttl_seconds=$2
   [ -f "$cache_file" ] || return 1
 
   modified_at=$(stat -f %m "$cache_file" 2>/dev/null) || return 1
   now=$(date +%s)
   age=$((now - modified_at))
-  [ "$age" -ge 0 ] && [ "$age" -lt "$CACHE_TTL_SECONDS" ]
+  [ "$age" -ge 0 ] && [ "$age" -lt "$cache_ttl_seconds" ]
 }
 
 start_refresh() {
   refresh_mode=$1
   cache_file=$2
+  cache_ttl_seconds=$3
   lock_dir=$cache_file.lock
 
-  cache_is_fresh "$cache_file" && return 0
+  cache_is_fresh "$cache_file" "$cache_ttl_seconds" && return 0
   if ! mkdir "$lock_dir" 2>/dev/null; then
     # A hard-killed refresh must not disable future updates forever.
     lock_modified_at=$(stat -f %m "$lock_dir" 2>/dev/null) || return 0
@@ -63,6 +64,40 @@ start_refresh() {
     </dev/null >/dev/null 2>&1 &
 }
 
+price_cache_ttl() {
+  case "$1" in
+    near-intents)
+      # The public token reference prices update less often than exchange
+      # tickers, and the response contains the full supported-token catalog.
+      printf '29'
+      ;;
+    *)
+      printf '%s' "$DEFAULT_CACHE_TTL_SECONDS"
+      ;;
+  esac
+}
+
+start_price_refresh() {
+  provider=$1
+  cache_file=$2
+  cache_ttl_seconds=$3
+  lock_dir=$cache_file.lock
+
+  cache_is_fresh "$cache_file" "$cache_ttl_seconds" && return 0
+  if ! mkdir "$lock_dir" 2>/dev/null; then
+    lock_modified_at=$(stat -f %m "$lock_dir" 2>/dev/null) || return 0
+    lock_now=$(date +%s)
+    lock_age=$((lock_now - lock_modified_at))
+    [ "$lock_age" -gt 30 ] || return 0
+    rmdir "$lock_dir" 2>/dev/null || return 0
+    mkdir "$lock_dir" 2>/dev/null || return 0
+  fi
+
+  nohup /bin/sh "$SCRIPT_DIR/touchbar_cached_value.sh" \
+    --refresh-prices "$provider" "$cache_file" "$lock_dir" \
+    </dev/null >/dev/null 2>&1 &
+}
+
 finish_refresh() {
   temporary_file=$1
   lock_dir=$2
@@ -70,34 +105,236 @@ finish_refresh() {
   rmdir "$lock_dir" 2>/dev/null || true
 }
 
+finish_price_refresh() {
+  temporary_file=$1
+  response_file=$2
+  lock_dir=$3
+  [ -n "$temporary_file" ] && rm -f "$temporary_file"
+  [ -n "$response_file" ] && rm -f "$response_file"
+  rmdir "$lock_dir" 2>/dev/null || true
+}
+
+fetch_price_response() {
+  provider=$1
+  response_file=$2
+
+  case "$provider" in
+    binance)
+      curl -fsS --connect-timeout 2 --max-time 6 \
+        'https://data-api.binance.vision/api/v3/ticker/price?symbols=%5B%22BTCUSDT%22%2C%22ETHUSDT%22%2C%22ZECUSDT%22%2C%22LTCUSDT%22%5D' \
+        > "$response_file"
+      ;;
+    coinbase)
+      curl -fsS --connect-timeout 2 --max-time 6 \
+        'https://api.coinbase.com/api/v3/brokerage/market/products?product_ids=BTC-USD&product_ids=ETH-USD&product_ids=ZEC-USD&product_ids=LTC-USD&product_type=SPOT' \
+        > "$response_file"
+      ;;
+    gemini)
+      curl -fsS --connect-timeout 2 --max-time 6 \
+        'https://api.gemini.com/v1/pricefeed' \
+        > "$response_file"
+      ;;
+    okx)
+      curl -fsS --connect-timeout 2 --max-time 6 \
+        'https://www.okx.com/api/v5/market/tickers?instType=SPOT' \
+        > "$response_file"
+      ;;
+    kucoin)
+      curl -fsS --connect-timeout 2 --max-time 6 \
+        'https://api.kucoin.com/api/v1/market/allTickers' \
+        > "$response_file"
+      ;;
+    near-intents)
+      curl -fsS --connect-timeout 2 --max-time 6 \
+        'https://1click.chaindefuser.com/v0/tokens' \
+        > "$response_file"
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+}
+
+parse_price_response() {
+  provider=$1
+  response_file=$2
+  temporary_file=$3
+
+  case "$provider" in
+    binance)
+      awk '
+        BEGIN { RS = "}"; FS = "\"" }
+        function field(name, i) {
+          for (i = 1; i < NF; i++) if ($i == name) return $(i + 2)
+          return ""
+        }
+        {
+          symbol = field("symbol")
+          price = field("price")
+          if (symbol == "BTCUSDT") printf "BTC\t$%.0f\n", price
+          if (symbol == "ETHUSDT") printf "ETH\t$%.0f\n", price
+          if (symbol == "ZECUSDT") printf "ZEC\t$%.2f\n", price
+          if (symbol == "LTCUSDT") printf "LTC\t$%.2f\n", price
+        }
+      ' "$response_file" > "$temporary_file"
+      ;;
+    coinbase)
+      awk '
+        BEGIN { RS = "}"; FS = "\"" }
+        function field(name, i) {
+          for (i = 1; i < NF; i++) if ($i == name) return $(i + 2)
+          return ""
+        }
+        {
+          symbol = field("product_id")
+          price = field("price")
+          if (symbol == "BTC-USD") printf "BTC\t$%.0f\n", price
+          if (symbol == "ETH-USD") printf "ETH\t$%.0f\n", price
+          if (symbol == "ZEC-USD") printf "ZEC\t$%.2f\n", price
+          if (symbol == "LTC-USD") printf "LTC\t$%.2f\n", price
+        }
+      ' "$response_file" > "$temporary_file"
+      ;;
+    gemini)
+      awk '
+        BEGIN { RS = "}"; FS = "\"" }
+        function field(name, i) {
+          for (i = 1; i < NF; i++) if ($i == name) return $(i + 2)
+          return ""
+        }
+        {
+          symbol = field("pair")
+          price = field("price")
+          if (symbol == "BTCUSD") printf "BTC\t$%.0f\n", price
+          if (symbol == "ETHUSD") printf "ETH\t$%.0f\n", price
+          if (symbol == "ZECUSD") printf "ZEC\t$%.2f\n", price
+          if (symbol == "LTCUSD") printf "LTC\t$%.2f\n", price
+        }
+      ' "$response_file" > "$temporary_file"
+      ;;
+    okx)
+      awk '
+        BEGIN { RS = "}"; FS = "\"" }
+        function field(name, i) {
+          for (i = 1; i < NF; i++) if ($i == name) return $(i + 2)
+          return ""
+        }
+        {
+          symbol = field("instId")
+          price = field("last")
+          if (symbol == "BTC-USDT") printf "BTC\t$%.0f\n", price
+          if (symbol == "ETH-USDT") printf "ETH\t$%.0f\n", price
+          if (symbol == "ZEC-USDT") printf "ZEC\t$%.2f\n", price
+          if (symbol == "LTC-USDT") printf "LTC\t$%.2f\n", price
+        }
+      ' "$response_file" > "$temporary_file"
+      ;;
+    kucoin)
+      awk '
+        BEGIN { RS = "}"; FS = "\"" }
+        function field(name, i) {
+          for (i = 1; i < NF; i++) if ($i == name) return $(i + 2)
+          return ""
+        }
+        {
+          symbol = field("symbol")
+          price = field("last")
+          if (symbol == "BTC-USDT") printf "BTC\t$%.0f\n", price
+          if (symbol == "ETH-USDT") printf "ETH\t$%.0f\n", price
+          if (symbol == "ZEC-USDT") printf "ZEC\t$%.2f\n", price
+          if (symbol == "LTC-USDT") printf "LTC\t$%.2f\n", price
+        }
+      ' "$response_file" > "$temporary_file"
+      ;;
+    near-intents)
+      awk '
+        BEGIN { RS = "}"; FS = "\"" }
+        function field(name, i) {
+          for (i = 1; i < NF; i++) if ($i == name) return $(i + 2)
+          return ""
+        }
+        function number_field(name, i, value) {
+          for (i = 1; i < NF; i++) {
+            if ($i == name) {
+              value = $(i + 1)
+              sub(/^[^0-9.+-]*/, "", value)
+              sub(/[^0-9.eE+-].*$/, "", value)
+              return value
+            }
+          }
+          return ""
+        }
+        {
+          symbol = field("symbol")
+          blockchain = field("blockchain")
+          price = number_field("price")
+          if (symbol == "BTC" && blockchain == "btc") printf "BTC\t$%.0f\n", price
+          if (symbol == "ETH" && blockchain == "eth") printf "ETH\t$%.0f\n", price
+          if (symbol == "ZEC" && blockchain == "zec") printf "ZEC\t$%.2f\n", price
+          if (symbol == "LTC" && blockchain == "ltc") printf "LTC\t$%.2f\n", price
+        }
+      ' "$response_file" > "$temporary_file"
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+}
+
+valid_price_cache() {
+  vpc_file=$1
+  vpc_line_count=$(awk 'END { print NR }' "$vpc_file")
+  [ "$vpc_line_count" -eq 4 ] || return 1
+  cache_value "$vpc_file" BTC >/dev/null || return 1
+  cache_value "$vpc_file" ETH >/dev/null || return 1
+  cache_value "$vpc_file" ZEC >/dev/null || return 1
+  cache_value "$vpc_file" LTC >/dev/null || return 1
+}
+
 refresh_prices() {
-  cache_file=$1
-  lock_dir=$2
-  temporary_file=$(mktemp "$CACHE_DIR/prices.XXXXXX") || {
+  provider=$1
+  cache_file=$2
+  lock_dir=$3
+  temporary_file=$(mktemp "$CACHE_DIR/prices-$provider.XXXXXX") || {
     rmdir "$lock_dir" 2>/dev/null || true
     exit 1
   }
-  trap 'finish_refresh "$temporary_file" "$lock_dir"' EXIT HUP INT TERM
+  response_file=$(mktemp "$CACHE_DIR/response-$provider.XXXXXX") || {
+    rm -f "$temporary_file"
+    rmdir "$lock_dir" 2>/dev/null || true
+    exit 1
+  }
+  trap 'finish_price_refresh "$temporary_file" "$response_file" "$lock_dir"' EXIT HUP INT TERM
 
-  if curl -fsS --connect-timeout 2 --max-time 6 \
-    'https://data-api.binance.vision/api/v3/ticker/price?symbols=%5B%22BTCUSDT%22%2C%22ETHUSDT%22%2C%22ZECUSDT%22%2C%22LTCUSDT%22%5D' |
-    awk '
-      BEGIN { RS = "}"; FS = "\"" }
-      $2 == "symbol" && $6 == "price" {
-        if ($4 == "BTCUSDT") printf "BTC\t$%.0f\n", $8
-        if ($4 == "ETHUSDT") printf "ETH\t$%.0f\n", $8
-        if ($4 == "ZECUSDT") printf "ZEC\t$%.2f\n", $8
-        if ($4 == "LTCUSDT") printf "LTC\t$%.2f\n", $8
-      }
-    ' > "$temporary_file"
+  if fetch_price_response "$provider" "$response_file" &&
+    parse_price_response "$provider" "$response_file" "$temporary_file" &&
+    valid_price_cache "$temporary_file"
   then
-    line_count=$(awk 'END { print NR }' "$temporary_file")
-    if [ "$line_count" -eq 4 ]; then
-      chmod 600 "$temporary_file"
-      mv -f "$temporary_file" "$cache_file"
-      temporary_file=
-    fi
+    chmod 600 "$temporary_file"
+    mv -f "$temporary_file" "$cache_file"
+    temporary_file=
+    return 0
   fi
+  return 1
+}
+
+show_price() {
+  provider=$1
+  symbol=$2
+
+  case "$provider" in
+    binance|coinbase|gemini|okx|kucoin|near-intents) ;;
+    *) printf 'waiting'; return 2 ;;
+  esac
+  case "$symbol" in
+    BTC|ETH|ZEC|LTC) ;;
+    *) printf 'waiting'; return 2 ;;
+  esac
+
+  price_cache=$CACHE_DIR/prices-$provider.tsv
+  price_ttl=$(price_cache_ttl "$provider")
+  start_price_refresh "$provider" "$price_cache" "$price_ttl"
+  cache_value "$price_cache" "$symbol" || printf 'waiting'
 }
 
 refresh_supply() {
@@ -172,7 +409,8 @@ refresh_flow() {
 
 case "$MODE" in
   --refresh-prices)
-    refresh_prices "$2" "$3"
+    [ "$#" -eq 4 ] || exit 2
+    refresh_prices "$2" "$3" "$4"
     ;;
   --refresh-supply)
     refresh_supply "$2" "$3"
@@ -180,16 +418,20 @@ case "$MODE" in
   --refresh-flow)
     refresh_flow "$2" "$3"
     ;;
+  price)
+    [ "$#" -eq 3 ] || { printf 'waiting'; exit 2; }
+    show_price "$2" "$3"
+    ;;
   BTC|ETH|ZEC|LTC)
-    start_refresh prices "$PRICE_CACHE"
-    cache_value "$PRICE_CACHE" "$MODE" || printf 'waiting'
+    # Backwards compatibility for v2.0 presets.
+    show_price binance "$MODE"
     ;;
   shielded_supply)
-    start_refresh supply "$SUPPLY_CACHE"
+    start_refresh supply "$SUPPLY_CACHE" "$DEFAULT_CACHE_TTL_SECONDS"
     cache_value "$SUPPLY_CACHE" shielded_supply || printf 'waiting'
     ;;
   net_flow)
-    start_refresh flow "$FLOW_CACHE"
+    start_refresh flow "$FLOW_CACHE" "$DEFAULT_CACHE_TTL_SECONDS"
     cache_value "$FLOW_CACHE" net_flow || printf 'waiting'
     ;;
   *)
