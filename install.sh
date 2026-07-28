@@ -13,4 +13,4 @@ mkdir -p "$BTT_ZCASH_INSTALL_DIR"
   "$BTT_ZCASH_INSTALL_DIR/"
 
 printf 'Installed BetterTouchTool Zcash helpers in:\n%s\n' "$BTT_ZCASH_INSTALL_DIR"
-printf 'Next: import crypto-price-Binance.json in BetterTouchTool.\n'
+printf 'Next: import one crypto-price-*.json provider preset in BetterTouchTool.\n'
