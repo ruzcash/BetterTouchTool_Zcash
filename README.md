@@ -1,51 +1,84 @@
 # BetterTouchTool Crypto Price Presets
 
-This repository contains BetterTouchTool Touch Bar presets for live crypto prices.
+Touch Bar presets for live BTC, ETH, ZEC, and LTC prices, with a Zcash details
+submenu for shielded supply and net shielded flow.
+
+## Version 2.0
+
+Version 2 moves network work out of BetterTouchTool's AppleScript runner. The
+recommended Binance preset reads values from a fast local cache while a helper
+updates all four prices in one background request.
+
+This fixes the main performance problem in the original version: four
+synchronous requests were executed every 10 seconds, and none had a timeout.
+If one endpoint was slow, the AppleScript runner stayed busy waiting for it.
+
+See [CHANGELOG.md](./CHANGELOG.md) for the complete v2 change list and measured
+before/after results.
 
 ## Included presets
 
-- [crypto-price-Coinbase.json](./crypto-price-Coinbase.json)
-- [crypto-price-Binance.json](./crypto-price-Binance.json)
+- [crypto-price-Binance.json](./crypto-price-Binance.json) — recommended,
+  asynchronous and batched in v2
+- [crypto-price-Coinbase.json](./crypto-price-Coinbase.json) — legacy Coinbase
+  price source; its Zcash detail metrics use the v2 helper
 
-## Shared behavior
+## Install
 
-Both presets use the same layout and formatting:
+The presets use a small local helper for non-blocking network updates. From the
+repository directory, run:
 
-- Coins: Bitcoin, Ethereum, Zcash, Litecoin
-- Order: `BTC`, `ETH`, `ZEC`, `LTC`
+```sh
+./install.sh
+```
+
+The installer copies the helper scripts to:
+
+```text
+~/Library/Application Support/BetterTouchTool/Zcash/
+```
+
+Then import `crypto-price-Binance.json` in BetterTouchTool using
+`Manage Presets > Import`.
+
+Running `install.sh` again safely updates an existing v2 installation.
+
+## Behavior preserved from v1
+
+- Coins and order: `BTC`, `ETH`, `ZEC`, `LTC`
 - Currency: USD
-- Refresh interval: every 10 seconds
-- Formatting: `BTC` and `ETH` are rounded to whole dollars, `ZEC` and `LTC` show 2 decimal places
+- Display refresh interval: every 10 seconds
+- Formatting: BTC and ETH use whole dollars; ZEC and LTC use two decimals
 - Theme: black buttons, white text, embedded coin icons
-- Pressing `ZEC` opens a second-level `Zcash Details` menu with live `Zcash`, `Shielded Supply`, `Net Shielded Flow`, and a gray `Back` button
+- BTC, ETH, LTC, and the inner ZEC button open their exchange pages
+- The top-level ZEC button opens `Zcash Details`
+- `Zcash Details` includes ZEC price, shielded supply, net shielded flow, and
+  a gray Back button
 
-## Differences
+## How v2 avoids blocking BetterTouchTool
 
-### Coinbase preset
+- A widget reads its cached value immediately, normally in 20–30 ms.
+- A stale cache starts one detached refresh protected by a lock.
+- Binance prices use one batched request for all four symbols.
+- Requests have a 2-second connection timeout and a 6-second total timeout.
+- Cache files are replaced atomically only after a complete successful result.
+- During an API failure, the last successful value remains visible. Before the
+  first successful refresh, the widget displays `waiting`.
 
-- File: [crypto-price-Coinbase.json](./crypto-price-Coinbase.json)
-- BetterTouchTool preset name: `Crypto Price Coinbase`
-- Price source: Coinbase spot price API
-- `BTC`, `ETH`, and `LTC` buttons open Coinbase asset pages
-- The top-level `ZEC` button opens the `Zcash Details` submenu
-- The `Zcash` button inside that submenu opens the Coinbase Zcash page
+Runtime cache files are stored under macOS's per-user temporary directory and
+do not need manual maintenance.
 
-### Binance preset
+## Files
 
-- File: [crypto-price-Binance.json](./crypto-price-Binance.json)
-- BetterTouchTool preset name: `Crypto Price Binance`
-- Price source: Binance spot ticker API
-- `BTC`, `ETH`, and `LTC` buttons open Binance asset pages
-- The top-level `ZEC` button opens the `Zcash Details` submenu
-- The `Zcash` button inside that submenu opens the Binance Zcash page
-
-## Import
-
-Import the preset you want in BetterTouchTool via `Manage Presets > Import`.
+- `crypto-price-Binance.json` — optimized Binance preset
+- `crypto-price-Coinbase.json` — Coinbase preset
+- `install.sh` — installs or updates the runtime helper
+- `src/touchbar_cached_value.sh` — cache and network refresh logic
+- `src/zcash_shielded_supply.sh` and `src/zcash_net_shielded_flow.sh` —
+  compatibility entry points
 
 ## Notes
 
-- Coin icons are embedded directly in the preset via `BTTIconData`.
-- The icon artwork is based on the `spothq/cryptocurrency-icons` set on GitHub.
-- You can adjust colors, width, order, and refresh interval directly in BetterTouchTool after import.
-- The `Zcash Details` submenu reads shielded metrics from the local helper scripts in `src/zcash_shielded_supply.sh` and `src/zcash_net_shielded_flow.sh`.
+- Coin artwork is based on the `spothq/cryptocurrency-icons` set on GitHub.
+- Colors, widths, order, and display interval can still be adjusted directly in
+  BetterTouchTool.
