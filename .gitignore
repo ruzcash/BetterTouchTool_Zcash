@@ -9,6 +9,12 @@ src/*
 !src/touchbar_cached_value.sh
 !src/zcash_net_shielded_flow.sh
 !src/zcash_shielded_supply.sh
+!scripts/
+scripts/*
+!scripts/generate_presets.py
+!tests/
+tests/*
+!tests/test_presets.sh
 !.gitignore
 !README.md
 !crypto-price-Coinbase.json
