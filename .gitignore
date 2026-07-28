@@ -1,8 +1,14 @@
 .DS_Store
 *.log
+*.before-optimization-*.bttpreset
 
-# Ignore all project folders; keep only root files tracked.
+# Ignore project folders except the runtime helpers referenced by the presets.
 */
+!src/
+src/*
+!src/touchbar_cached_value.sh
+!src/zcash_net_shielded_flow.sh
+!src/zcash_shielded_supply.sh
 !.gitignore
 !README.md
 !crypto-price-Coinbase.json
