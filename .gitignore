@@ -15,6 +15,10 @@ scripts/*
 !tests/
 tests/*
 !tests/test_presets.sh
+!assets/
+assets/*
+!assets/filecoin-symbol.png
+!assets/horizen-symbol.png
 !.gitignore
 !README.md
 !crypto-price-Coinbase.json

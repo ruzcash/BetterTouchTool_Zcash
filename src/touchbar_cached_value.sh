@@ -31,6 +31,22 @@ cache_value() {
   return 1
 }
 
+format_price() {
+  fp_display=$1
+  fp_numeric=${fp_display#\$}
+  fp_whole=${fp_numeric%%.*}
+
+  case "$fp_whole" in
+    ''|*[!0-9]*) printf '%s' "$fp_display"; return ;;
+  esac
+
+  if [ "$fp_whole" -ge 1000 ]; then
+    printf '$%.0f' "$fp_numeric"
+  else
+    printf '%s' "$fp_display"
+  fi
+}
+
 cache_is_fresh() {
   cache_file=$1
   cache_ttl_seconds=$2
@@ -62,6 +78,36 @@ start_refresh() {
   nohup /bin/sh "$SCRIPT_DIR/touchbar_cached_value.sh" \
     "--refresh-$refresh_mode" "$cache_file" "$lock_dir" \
     </dev/null >/dev/null 2>&1 &
+}
+
+supported_symbols() {
+  case "$1" in
+    binance|coinbase|okx|kucoin)
+      printf '%s\n' BTC ETH ZEC LTC FIL ZEN
+      ;;
+    gemini|near-intents)
+      printf '%s\n' BTC ETH ZEC LTC
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+expected_symbol_count() {
+  supported_symbols "$1" | awk 'END { print NR }'
+}
+
+symbol_is_supported() {
+  provider=$1
+  symbol=$2
+
+  for supported_symbol in $(supported_symbols "$provider"); do
+    if [ "$supported_symbol" = "$symbol" ]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 price_cache_ttl() {
@@ -121,12 +167,12 @@ fetch_price_response() {
   case "$provider" in
     binance)
       curl -fsS --connect-timeout 2 --max-time 6 \
-        'https://data-api.binance.vision/api/v3/ticker/price?symbols=%5B%22BTCUSDT%22%2C%22ETHUSDT%22%2C%22ZECUSDT%22%2C%22LTCUSDT%22%5D' \
+        'https://data-api.binance.vision/api/v3/ticker/price?symbols=%5B%22BTCUSDT%22%2C%22ETHUSDT%22%2C%22ZECUSDT%22%2C%22LTCUSDT%22%2C%22FILUSDT%22%2C%22ZENUSDT%22%5D' \
         > "$response_file"
       ;;
     coinbase)
       curl -fsS --connect-timeout 2 --max-time 6 \
-        'https://api.coinbase.com/api/v3/brokerage/market/products?product_ids=BTC-USD&product_ids=ETH-USD&product_ids=ZEC-USD&product_ids=LTC-USD&product_type=SPOT' \
+        'https://api.coinbase.com/api/v3/brokerage/market/products?product_ids=BTC-USD&product_ids=ETH-USD&product_ids=ZEC-USD&product_ids=LTC-USD&product_ids=FIL-USD&product_ids=ZEN-USD&product_type=SPOT' \
         > "$response_file"
       ;;
     gemini)
@@ -175,6 +221,8 @@ parse_price_response() {
           if (symbol == "ETHUSDT") printf "ETH\t$%.0f\n", price
           if (symbol == "ZECUSDT") printf "ZEC\t$%.2f\n", price
           if (symbol == "LTCUSDT") printf "LTC\t$%.2f\n", price
+          if (symbol == "FILUSDT") printf "FIL\t$%.2f\n", price
+          if (symbol == "ZENUSDT") printf "ZEN\t$%.2f\n", price
         }
       ' "$response_file" > "$temporary_file"
       ;;
@@ -192,6 +240,8 @@ parse_price_response() {
           if (symbol == "ETH-USD") printf "ETH\t$%.0f\n", price
           if (symbol == "ZEC-USD") printf "ZEC\t$%.2f\n", price
           if (symbol == "LTC-USD") printf "LTC\t$%.2f\n", price
+          if (symbol == "FIL-USD") printf "FIL\t$%.2f\n", price
+          if (symbol == "ZEN-USD") printf "ZEN\t$%.2f\n", price
         }
       ' "$response_file" > "$temporary_file"
       ;;
@@ -226,6 +276,8 @@ parse_price_response() {
           if (symbol == "ETH-USDT") printf "ETH\t$%.0f\n", price
           if (symbol == "ZEC-USDT") printf "ZEC\t$%.2f\n", price
           if (symbol == "LTC-USDT") printf "LTC\t$%.2f\n", price
+          if (symbol == "FIL-USDT") printf "FIL\t$%.2f\n", price
+          if (symbol == "ZEN-USDT") printf "ZEN\t$%.2f\n", price
         }
       ' "$response_file" > "$temporary_file"
       ;;
@@ -243,6 +295,8 @@ parse_price_response() {
           if (symbol == "ETH-USDT") printf "ETH\t$%.0f\n", price
           if (symbol == "ZEC-USDT") printf "ZEC\t$%.2f\n", price
           if (symbol == "LTC-USDT") printf "LTC\t$%.2f\n", price
+          if (symbol == "FIL-USDT") printf "FIL\t$%.2f\n", price
+          if (symbol == "ZEN-USDT") printf "ZEN\t$%.2f\n", price
         }
       ' "$response_file" > "$temporary_file"
       ;;
@@ -282,13 +336,15 @@ parse_price_response() {
 }
 
 valid_price_cache() {
-  vpc_file=$1
+  vpc_provider=$1
+  vpc_file=$2
   vpc_line_count=$(awk 'END { print NR }' "$vpc_file")
-  [ "$vpc_line_count" -eq 4 ] || return 1
-  cache_value "$vpc_file" BTC >/dev/null || return 1
-  cache_value "$vpc_file" ETH >/dev/null || return 1
-  cache_value "$vpc_file" ZEC >/dev/null || return 1
-  cache_value "$vpc_file" LTC >/dev/null || return 1
+  vpc_expected_count=$(expected_symbol_count "$vpc_provider")
+  [ "$vpc_line_count" -eq "$vpc_expected_count" ] || return 1
+
+  for vpc_symbol in $(supported_symbols "$vpc_provider"); do
+    cache_value "$vpc_file" "$vpc_symbol" >/dev/null || return 1
+  done
 }
 
 refresh_prices() {
@@ -308,7 +364,7 @@ refresh_prices() {
 
   if fetch_price_response "$provider" "$response_file" &&
     parse_price_response "$provider" "$response_file" "$temporary_file" &&
-    valid_price_cache "$temporary_file"
+    valid_price_cache "$provider" "$temporary_file"
   then
     chmod 600 "$temporary_file"
     mv -f "$temporary_file" "$cache_file"
@@ -326,15 +382,16 @@ show_price() {
     binance|coinbase|gemini|okx|kucoin|near-intents) ;;
     *) printf 'waiting'; return 2 ;;
   esac
-  case "$symbol" in
-    BTC|ETH|ZEC|LTC) ;;
-    *) printf 'waiting'; return 2 ;;
-  esac
+  symbol_is_supported "$provider" "$symbol" || { printf 'waiting'; return 2; }
 
   price_cache=$CACHE_DIR/prices-$provider.tsv
   price_ttl=$(price_cache_ttl "$provider")
   start_price_refresh "$provider" "$price_cache" "$price_ttl"
-  cache_value "$price_cache" "$symbol" || printf 'waiting'
+  if cached_price=$(cache_value "$price_cache" "$symbol"); then
+    format_price "$cached_price"
+  else
+    printf 'waiting'
+  fi
 }
 
 refresh_supply() {
